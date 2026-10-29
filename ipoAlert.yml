@@ -1,0 +1,42 @@
+name: IPO GMP Alert
+
+on:
+  schedule:
+    # GitHub cron is in UTC. IST = UTC + 5:30. Mon-Fri only.
+    - cron: "30 4 * * 1-5"   # 10:00 AM IST
+    - cron: "30 7 * * 1-5"   # 01:00 PM IST
+  workflow_dispatch:           # lets you run it manually from the Actions tab
+    inputs:
+      test_message:
+        description: "Only send a test Telegram message"
+        type: boolean
+        default: false
+      force_date:
+        description: "Pretend today is this date (YYYY-MM-DD) for testing"
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+
+      - name: Run IPO check
+        run: python ipo_alert.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          MIN_GMP_PCT: ${{ vars.MIN_GMP_PCT || '30' }}
+          INCLUDE_SME: ${{ vars.INCLUDE_SME || 'true' }}
+          TEST_MODE: ${{ inputs.test_message }}
+          FORCE_DATE: ${{ inputs.force_date }}
