@@ -119,21 +119,42 @@ def nums(s):
     return [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", str(s).replace(",", ""))]
 
 
+MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+DATE_RE = re.compile(
+    r"(\d{1,2})\s*[-/ ]?\s*"
+    r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+    r"(?:[-/ ,]*(\d{4}))?", re.I)
+
+
 def parse_close(s, today):
-    s = re.sub(r"\s+", " ", str(s).strip().replace("-", " ").replace("/", " "))
-    for fmt, has_year in (("%d %b %Y", True), ("%d %B %Y", True),
-                          ("%d %b", False), ("%d %B", False),
-                          ("%b %d", False)):
-        try:
-            d = datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-        year = d.year if has_year else today.year
-        out = date(year, d.month, d.day)
-        if not has_year and (today - out).days > 180:   # Dec -> Jan rollover
-            out = date(year + 1, d.month, d.day)
-        return out
-    return None
+    """Cell can look like '30-Oct', '30-Oct GMP: 12.5' or '30-OctGMP: 12.5'.
+    Take the first date in it and ignore the rest."""
+    m_ = DATE_RE.search(str(s))
+    if not m_:
+        return None
+    day, mon, yr = int(m_.group(1)), MONTHS[m_.group(2).lower()], m_.group(3)
+    year = int(yr) if yr else today.year
+    try:
+        out = date(year, mon, day)
+    except ValueError:
+        return None
+    if not yr and (today - out).days > 180:      # Dec -> Jan rollover
+        out = date(year + 1, mon, day)
+    return out
+
+
+def clean_name(raw):
+    """Site cell looks like 'Foo Ltd BSE SMEO' or 'Foo Ltd IPOO'
+    (exchange tag + SME tag + one status letter). Return (name, is_sme)."""
+    s = re.sub(r"\[email.*$", "", str(raw)).strip()
+    sme = bool(re.search(r"\bSME", s))
+    m_ = re.search(r"\s(?:BSE|NSE)\b", s)
+    if m_:
+        s = s[:m_.start()]
+    s = re.sub(r"\s*\bIPO[A-Z]{0,2}$", "", s.strip()).strip()
+    return s, sme
 
 
 def get_ipos(today):
@@ -152,6 +173,7 @@ def get_ipos(today):
     if not (c_price and c_gmp and c_close):
         raise RuntimeError(f"Missing columns. Found: {list(df.columns)}")
 
+    log(f"GMP table has {len(df)} rows")
     ipos = []
     for _, row in df.iterrows():
         try:
@@ -159,13 +181,16 @@ def get_ipos(today):
             price, gmp = nums(row[c_price]), nums(row[c_gmp])
             close = parse_close(row[c_close], today)
             if not name or not price or not gmp or close is None:
+                log(f"Skipping '{name[:40]}': price={price} gmp={gmp} "
+                    f"close_cell={str(row[c_close])[:30]!r}")
                 continue
             upper = price[-1]                     # upper end of the band
             if upper <= 0:
                 continue
+            clean, is_sme = clean_name(name)
             ipos.append({
-                "name": re.sub(r"\s*\bIPO\b\s*$", "", name, flags=re.I).strip(),
-                "sme": bool(re.search(r"\bSME\b", name, re.I)),
+                "name": clean,
+                "sme": is_sme,
                 "upper": upper,
                 "gmp": gmp[0],
                 "pct": gmp[0] / upper * 100,
