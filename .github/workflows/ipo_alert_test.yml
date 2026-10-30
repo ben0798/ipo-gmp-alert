@@ -1,0 +1,44 @@
+name: IPO GMP Alert TEST
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_gmp_pct:
+        description: "Test threshold in % (production uses 30)"
+        default: "5"
+      test_date:
+        description: "Pretend today is this date (YYYY-MM-DD). Empty = real today"
+        required: false
+      any_open:
+        description: "Include every IPO closing today or later (not only today)"
+        type: boolean
+        default: true
+      send_to:
+        description: "Where to send the test alert"
+        type: choice
+        options: [admin, channel]
+        default: admin
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Run test
+        run: python ipo_alert_test.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          INCLUDE_SME: ${{ vars.INCLUDE_SME || 'true' }}
+          TEST_MIN_PCT: ${{ inputs.min_gmp_pct }}
+          TEST_DATE: ${{ inputs.test_date }}
+          TEST_ANY_OPEN: ${{ inputs.any_open }}
+          TEST_SEND_TO: ${{ inputs.send_to }}
